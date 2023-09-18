@@ -319,10 +319,38 @@ Resources:
       DestinationCidrBlock: 0.0.0.0/0
       NatGatewayId: !Ref NatGateway2
  
+  NatGateway3EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Condition: BuildNAT3
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Join ['-', ["NAT2-EIP", !Ref "AWS::StackName", !Ref EnvironmentName]] 
+
+  NatGateway3:
+    Type: AWS::EC2::NatGateway
+    Condition: BuildNAT3
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet3
+      Tags:
+        - Key: Name
+          Value: !Join ['-', ["NAT2", !Ref "AWS::StackName", !Ref EnvironmentName]] 
+
+  DefaultPrivateRoute3:
+    Type: AWS::EC2::Route
+    Condition: BuildNAT3
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway3
+  
   EC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      # ImageId: ami-07dc0b5cad2999c28 
+      # ImageId: ami-07dc0b5cad2999c28 where I am at the moment
       ImageId: !FindInMap [ AmazonLinuxAMI, !Ref "AWS::Region", AMI]  # lookup from AMI map
       InstanceType: t2.micro    
       Tags:
