@@ -1,0 +1,398 @@
+Description:  This template deploys a VPC, with a three public and private subnets (if selected), spread
+  across three Availability Zones. It deploys an internet gateway, with a default
+  route on the public subnets. If selected, it deploys a pair of NAT gateways (one in each AZ),
+  and default routes for them in the private subnets. It also creates and instance and its associated
+  security group in one of the public subnets.
+
+Metadata:
+ # Control the display when running this template from the AWS Management Console:
+ AWS::CloudFormation::Interface:
+   ParameterGroups:
+     - Label:
+         default: "Network Configuration"
+       Parameters:
+         - EnvironmentName
+         - NumberOfAZs
+         - PrivateSubnets
+         - NATs
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    AllowedValues:
+    - Dev
+    - Prod
+    - Test
+    Default: Test
+    Description: Which environment are you working on?
+  
+  NumberOfAZs:
+    Type: Number
+    AllowedValues:
+    - 1
+    - 2
+    - 3
+    Default: 2
+    Description:  How many Availability Zones do you wish to utilize?
+  
+  PrivateSubnets:
+    Type: String
+    AllowedValues:
+    - True
+    - False
+    Default: True
+    Description: Do you want to create private subnets in addition to public subnets?
+  
+  NATs:
+    Type: String
+    AllowedValues:
+    - True
+    - False
+    Default: True
+    Description: Do you want to create NAT Gateways on the private subnets?
+  
+
+Mappings:
+ #  This is the Amazon Linux 2 AMI, only a few examples are given.  Adjust these values as needed, they can change a few times per year:
+ AmazonLinuxAMI:
+   eu-central-1:
+     AMI: ami-0b9094fa2b07038b8    # Frankfurt
+   eu-west-1:
+     AMI: ami-0648880541a3156f7    # Ireland    
+   eu-west-2:
+     AMI: ami-07dc0b5cad2999c28    # London
+   eu-west-3:
+     AMI: ami-091b37bfd6e01db4f    # Paris
+   eu-north-1:
+     AMI: ami-0b0d560d43e65a601    # Stockholm
+
+Conditions:
+  BuildPublic2:         !Equals [ !Ref NumberOfAZs, 2 ]
+  BuildPublic3:         !Equals [ !Ref NumberOfAZs, 3 ] 
+
+  BuildPrivateSubnets: !Equals [ !Ref PrivateSubnets, True ]
+  BuildPrivate1:       !Equals [ !Ref PrivateSubnets, True ]
+  BuildPrivate2:       !And [ !Equals [ !Ref PrivateSubnets, True ] , !Equals [ !Ref NumberOfAZs, 2 ] ]
+  BuildPrivate3:       !And [ Condition: BuildPrivateSubnets , Condition: BuildPublic3 ]
+  
+  BuildNATs: !Equals [ !Ref NATs, True ]
+  BuildNAT1: !And [ Condition: BuildNATs , Condition: BuildPrivate1 ]
+  BuildNAT2: !And [ Condition: BuildNATs , Condition: BuildPrivate2 ]
+
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.192.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "VPC"]]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: VPC
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "IGW"]]
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    DependsOn: InternetGateway
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      CidrBlock: 10.192.10.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Public Subnet (AZ1)"]] 
+#         Value: !Sub ${EnvironmentName} Public Subnet (AZ2) -if I just wanted to replace one name
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Condition: BuildPublic2
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: 10.192.11.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Public Subnet (AZ2)"]] 
+ 
+  PublicSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: BuildPublic3
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs  '' ]
+      CidrBlock: 10.192.12.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Public Subnet (AZ3)"]] 
+  
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Condition: BuildPrivate1
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 0, !GetAZs  '' ]
+      CidrBlock: 10.192.20.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Private Subnet (AZ1)"]] 
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    #DependsOn: PublicSubnet2
+    Condition: BuildPrivate2
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 1, !GetAZs  '' ]
+      CidrBlock: 10.192.21.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Private Subnet (AZ2)"]] 
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Condition: BuildPrivate3
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [ 2, !GetAZs  '' ]
+      CidrBlock: 10.192.22.0/24
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Private Subnet (AZ3)"]] 
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Public Route"]] 
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: BuildPublic2
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  PublicSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: BuildPublic3
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet3
+  
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Condition: BuildPrivate1
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Private Route (AZ1)"]] 
+  
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: BuildPrivate1
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Condition: BuildPrivate2
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Private Route (AZ2)"]] 
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: BuildPrivate2
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  PrivateRouteTable3:
+    Type: AWS::EC2::RouteTable
+    Condition: BuildPrivate3
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "Private Route (AZ3)"]] 
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Condition: BuildPrivate3
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable3
+      SubnetId: !Ref PrivateSubnet3
+  
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Condition: BuildNAT1
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Join ['-', ["NAT1-EIP", !Ref "AWS::StackName", !Ref EnvironmentName]] 
+
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Condition: BuildNAT1
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Join ['-', ["NAT1", !Ref "AWS::StackName", !Ref EnvironmentName]] 
+
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Condition: BuildNAT1
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Condition: BuildNAT2
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Join ['-', ["NAT2-EIP", !Ref "AWS::StackName", !Ref EnvironmentName]] 
+
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Condition: BuildNAT2
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Join ['-', ["NAT2", !Ref "AWS::StackName", !Ref EnvironmentName]] 
+
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Condition: BuildNAT2
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+ 
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      # ImageId: ami-07dc0b5cad2999c28 
+      ImageId: !FindInMap [ AmazonLinuxAMI, !Ref "AWS::Region", AMI]  # lookup from AMI map
+      InstanceType: t2.micro    
+      Tags:
+        - Key: Name
+          Value: !Join ['-', ["EC2", !Ref "AWS::StackName", !Ref EnvironmentName]] 
+      NetworkInterfaces:
+      - DeviceIndex: '0'
+        SubnetId: !Ref PublicSubnet1                  
+        AssociatePublicIpAddress: true                
+        GroupSet: [!Ref EC2SecurityGroup]   
+
+  EC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: "Allow HTTP/HTTPS and SSH inbound and outbound traffic"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Join ['-', [!Ref "AWS::StackName", !Ref EnvironmentName, "VPC"]]
+
+  
+
+  PublicSubnet1:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref PublicSubnet1
+    
+
+  PublicSubnet2:
+    Description: A reference to the public subnet in the 2nd Availability Zone
+    Condition: BuildPublic2
+    Value: !Ref PublicSubnet2
+   
+  
+  PublicSubnet3:
+    Description: A reference to the public subnet in the 3rd Availability Zone
+    Condition: BuildPublic3
+    Value: !Ref PublicSubnet3
+    
+
+  PrivateSubnet1:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Condition: BuildPrivateSubnets
+    Value: !Ref PrivateSubnet1
+    
+
+  PrivateSubnet2:
+    Description: A reference to the private subnet in the 2nd Availability Zone
+    Condition: BuildPrivate2
+    Value: !Ref PrivateSubnet2
+    
+
+  PrivateSubnet3:
+    Description: A reference to the private subnet in the 3rd Availability Zone
+    Condition: BuildPrivate3
+    Value: !Ref PrivateSubnet3
+    
